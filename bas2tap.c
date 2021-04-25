@@ -253,6 +253,35 @@ struct TokenMap_s
 
 #define MAXLINELENGTH 1024
 
+#define INK_CHAR 16
+#define PAPER_CHAR 17
+
+#define INK_DEFAULT 0
+#define PAPER_DEFAULT 7
+#define HL_INK(p, color) \
+  *((p) ++) = INK_CHAR; \
+  *((p) ++) = color;
+#define HL_PAPER(p, color) \
+  *((p) ++) = PAPER_CHAR; \
+  *((p) ++) = color;
+#define HL_INK_DEFAULT(p) HL_INK(p, INK_DEFAULT)
+#define HL_PAPER_DEFAULT(p) HL_PAPER(p, PAPER_DEFAULT)
+
+#define HL_NUMBER_BEGIN(p) HL_INK(p, 1)
+#define HL_NUMBER_END(p) HL_INK_DEFAULT(p)
+#define HL_BINARY_BEGIN(p) HL_INK(p, 2)
+#define HL_BINARY_END(p) HL_INK_DEFAULT(p)
+#define HL_STRING_BEGIN(p) HL_INK(p, 4)
+#define HL_STRING_END(p) HL_INK_DEFAULT(p)
+#define HL_KEYWORD_BEGIN(p) HL_PAPER(p, 3)
+#define HL_KEYWORD_END(p) HL_PAPER_DEFAULT(p)
+#define HL_REM_BEGIN(p) HL_INK(p, 3)
+#define HL_REM_END(p) HL_INK_DEFAULT(p)
+#define HL_BRACKET_BEGIN(p, c) HL_INK(p,1+((c-1) % 5))
+#define HL_BRACKET_END(p) HL_INK_DEFAULT(p)
+#define HL_TOKEN_BEGIN(p) HL_PAPER(p,6);
+#define HL_TOKEN_END(p) HL_PAPER_DEFAULT(p)
+
 char ConvertedSpectrumLine[MAXLINELENGTH + 1];
 byte ResultingLine[MAXLINELENGTH + 1];
 
@@ -501,6 +530,7 @@ int HandleNumbers (int BasicLineNo, char **BasicLine, byte **SpectrumLine)
     else
       Value = Value / pow (10.0, Exp);
   }
+  HL_NUMBER_BEGIN(*SpectrumLine);
   strncpy ((char *)*SpectrumLine, StartOfNumber, *BasicLine - StartOfNumber);                     /* Insert the ASCII value first */
   (*SpectrumLine) += (*BasicLine - StartOfNumber);
   IntValue = (int)floor (Value);
@@ -542,6 +572,7 @@ int HandleNumbers (int BasicLineNo, char **BasicLine, byte **SpectrumLine)
     *((*SpectrumLine) ++) = (byte)((Mantissa >> 8) & 0xFF);
     *((*SpectrumLine) ++) = (byte)(Mantissa & 0xFF);
   }
+  HL_NUMBER_END(*SpectrumLine);
   return (1);
 }
 
@@ -559,6 +590,7 @@ int HandleBIN (int BasicLineNo, char **BasicLine, byte **SpectrumLine)
 {
   int Value = 0;
 
+  HL_BINARY_BEGIN(*SpectrumLine)
   while ((**BasicLine) == '0' || (**BasicLine) == '1')                                                 /* Read only binary digits */
   {
     Value = Value * 2 + **BasicLine - '0';
@@ -575,6 +607,7 @@ int HandleBIN (int BasicLineNo, char **BasicLine, byte **SpectrumLine)
   *((*SpectrumLine) ++) = (byte)(Value & 0xFF);
   *((*SpectrumLine) ++) = (byte)(Value >> 8);
   *((*SpectrumLine) ++) = 0x00;
+  HL_BINARY_END(*SpectrumLine)
   return (1);
 }
 
@@ -3128,6 +3161,7 @@ int main (int argc, char **argv)
             {
               InString = FALSE;
               *(ResultIndex ++) = *(BasicIndex ++);
+              HL_STRING_END(ResultIndex)
               while (*BasicIndex == ' ')                                                                  /* Skip trailing spaces */
                 BasicIndex ++;
             }
@@ -3149,6 +3183,7 @@ int main (int argc, char **argv)
             else
             {
               InString = TRUE;
+              HL_STRING_BEGIN(ResultIndex)
               *(ResultIndex ++) = *(BasicIndex ++);
             }
           }
@@ -3165,7 +3200,23 @@ int main (int argc, char **argv)
                                  BasicLineNo, SubLineCount, TokenMap[(byte)(*BasicIndex)].Token);
                         AllOk = FALSE;
                         break;
-              case  1 : *(ResultIndex ++) = Token;                                                             /* (Found keyword) */
+              case  1 : 
+                        if (Token > 127)
+                        {
+                          if (Token == 0xEA)
+                          {
+                            HL_REM_BEGIN(ResultIndex)
+                          }
+                          else
+                          {
+                            HL_KEYWORD_BEGIN(ResultIndex)
+                          }
+                        }
+                        *(ResultIndex ++) = Token;                                                             /* (Found keyword) */
+                        if (Token > 127 && Token != 0xEA)
+                        {
+                          HL_KEYWORD_END(ResultIndex)
+                        }
                         if (Token != ':')                                                   /* Special exception; empty statement */
                           ExpectKeyword = FALSE;
                         if (Token == DEFFN)
@@ -3184,13 +3235,16 @@ int main (int argc, char **argv)
                               case  0 : *(ResultIndex ++) = *(BasicIndex ++); break;
                               case  1 : break;
                             }
+                          HL_REM_END(ResultIndex)
                         break;
             }
           }
           else if (*BasicIndex == '(')                                                                         /* Opening bracket */
           {
             BracketCount ++;
+            HL_BRACKET_BEGIN(ResultIndex, BracketCount);
             *(ResultIndex ++) = *(BasicIndex ++);
+            HL_BRACKET_END(ResultIndex);
             if (HandlingDEFFN && !InsideDEFFN)
 #ifdef __DEBUG__
             {
@@ -3224,7 +3278,11 @@ int main (int argc, char **argv)
               AllOk = FALSE;
             }
             else
+            {
+              HL_BRACKET_BEGIN(ResultIndex, BracketCount+1);
               *(ResultIndex ++) = *(BasicIndex ++);
+              HL_BRACKET_END(ResultIndex);
+            }
           }
           else if (*BasicIndex == ',' && HandlingDEFFN && InsideDEFFN)
           {
@@ -3264,7 +3322,16 @@ int main (int argc, char **argv)
                           case -1 : AllOk = FALSE; break;
                         }
                         break;
-              case  1 : *(ResultIndex ++) = Token;                                                   /* (Found token, no keyword) */
+              case  1 : 
+                        if (Token > 127)
+                        {
+                          HL_TOKEN_BEGIN(ResultIndex);
+                        }
+                        *(ResultIndex ++) = Token;                                                   /* (Found token, no keyword) */
+                        if (Token > 127)
+                        {
+                          HL_TOKEN_END(ResultIndex);
+                        }
                         if (Token == ':' || Token == 0xCB)
                         {
                           ExpectKeyword = TRUE;
